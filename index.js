@@ -71,18 +71,19 @@ async function run() {
     const db = client.db("assignment11");
     const foodsColectin = db.collection("foods");
 
-
+    //This is for add-food page
     app.post('/add-food', async(req,res)=>{
       const data = req.body;
       const result = await foodsColectin.insertOne(data)
       res.send(result)
     })
 
+   
+
 
 
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
     console.log("✅ Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
   }
@@ -95,7 +96,7 @@ run().catch(console.dir);
 // Root route
 
 
-app.get("/",  async (req, res) => {
+app.get("/", verifyFirebaseToken,  async (req, res) => {
   // const token =req.headers?.authorization.split(' ')[1]
   // console.log(verifyFirebaseToken);
 
