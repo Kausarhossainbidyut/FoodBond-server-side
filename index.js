@@ -184,6 +184,30 @@ async function run() {
       res.send(result);
     });
 
+    // delete food
+    app.delete('/manage-my-food/:id', async (req, res) => {
+      const id = req.params.id;
+
+      
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid ID format" });
+      }
+
+      const query = { _id: new ObjectId(id) };
+
+      try {
+        const result = await foodsColectin.deleteOne(query);
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: "Food item not found" });
+        }
+        res.send({ message: "Deleted successfully", deletedCount: result.deletedCount });
+      } catch (error) {
+        console.error("Delete error:", error);
+        res.status(500).json({ error: "Server error while deleting" });
+      }
+    });
+
+
 
 
 
