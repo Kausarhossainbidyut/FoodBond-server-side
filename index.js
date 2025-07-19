@@ -44,7 +44,7 @@ const client = new MongoClient(uri, {
 const verifyFirebaseToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   // console.log('auth:',authHeader);
-  
+
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Unauthorized: No token provided' });
@@ -56,12 +56,13 @@ const verifyFirebaseToken = async (req, res, next) => {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     req.firebaseUser = decodedToken; // You can access user info like uid, email, etc.
     next();
-    console.log('decoderToken:',decodedToken);
-    
+    console.log('decoderToken:', decodedToken);
+
 
   } catch (error) {
     return res.status(401).json({ message: 'Unauthorized: Invalid token from catch' });
   }
+
 };
 
 
@@ -71,16 +72,41 @@ async function run() {
     const db = client.db("assignment11");
     const foodsColectin = db.collection("foods");
 
-    //This is for add-food page
-    app.post('/add-food', async(req,res)=>{
+    //This is for /add-food page
+    app.post('/add-food', async (req, res) => {
       const data = req.body;
       const result = await foodsColectin.insertOne(data)
       res.send(result)
     })
 
-   
+    //This is for /home/featured-foods page
+    app.get("/featured-foods", async (req, res) => {
+      try {
+        const data = await foodsColectin.aggregate([
+          {
+            $match: { status: "available" }
+          },
+          {
+            $addFields: {
+              quantityNum: { $toInt: "$quantity" }
+            }
+          },
+          {
+            $sort: { quantityNum: -1 }
+          },
+          {
+            $limit: 6
+          }
+        ]).toArray();
 
+        res.send(data);
+      } catch (err) {
+        console.error("Error in /featured-foods:", err);
+        res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
 
+    
 
 
     // Send a ping to confirm a successful connection
@@ -96,7 +122,7 @@ run().catch(console.dir);
 // Root route
 
 
-app.get("/", verifyFirebaseToken,  async (req, res) => {
+app.get("/", verifyFirebaseToken, async (req, res) => {
   // const token =req.headers?.authorization.split(' ')[1]
   // console.log(verifyFirebaseToken);
 
