@@ -165,9 +165,26 @@ async function run() {
 
         res.send(data);
       } catch (error) {
-        console.log( error);
+        console.log(error);
       }
     });
+
+    // Cancel request API (PATCH)
+    app.patch("/cancel-request/:id", verifyFirebaseToken, async (req, res) => {
+      const { userNotes } = req.body;
+      const query = { _id: new ObjectId(req.params.id) };
+      const updateDoc = {
+        $set: {
+          status: "available",
+          requestedBy: null,          // important: clear requestedBy on cancel
+          userNotes: userNotes || "",
+        },
+      };
+      const result = await foodsColectin.updateOne(query, updateDoc);
+      res.send(result);
+    });
+
+
 
 
 
