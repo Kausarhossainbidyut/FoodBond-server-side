@@ -106,7 +106,14 @@ async function run() {
       }
     });
 
-    
+   
+
+    //This for /food-details/:foodId
+    app.get("/food-details/:id", async (req, res) => {
+      const query = { _id: new ObjectId(req.params.id) }
+      const data = await foodsColectin.findOne(query)
+      res.send(data)
+    })
 
 
     // Send a ping to confirm a successful connection
