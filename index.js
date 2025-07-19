@@ -109,9 +109,9 @@ async function run() {
     //This is for /available-food page
     app.get("/available-food", async (req, res) => {
       const data = await foodsColectin
-      .find({ status: "available" })
-      .sort({ expirationDate: 1 }) 
-      .toArray();
+        .find({ status: "available" })
+        .sort({ expirationDate: 1 })
+        .toArray();
       res.send(data)
     })
 
@@ -121,6 +121,54 @@ async function run() {
       const data = await foodsColectin.findOne(query)
       res.send(data)
     })
+
+    //this is for register/:id
+    app.patch("/request/:id", verifyFirebaseToken, async (req, res) => {
+      const { userNotes } = req.body;
+      const query = { _id: new ObjectId(req.params.id) };
+
+      const updateDoc = {
+        $set: {
+          status: "requested",
+          requestDate: new Date(),
+          requestedBy: req.firebaseUser.email,
+          userNotes: userNotes || ""
+        },
+      };
+
+      const result = await foodsColectin.updateOne(query, updateDoc);
+      res.send(result);
+    });
+
+
+    // this is /manage-my-food
+    app.get("/manage-my-food", verifyFirebaseToken, async (req, res) => {
+      const query = { donorEmail: req.firebaseUser.email }
+      const data = await foodsColectin
+        .find(query)
+        .toArray();
+      res.send(data)
+    })
+
+    //This is for /request-food page
+    app.get("/my-food-request", verifyFirebaseToken, async (req, res) => {
+      const userEmail = req.firebaseUser.email;
+
+      try {
+        const data = await foodsColectin
+          .find({
+            status: "requested",
+            requestedBy: userEmail, // নিজের ইমেইলের সাথে মিল
+          })
+          .sort({ expirationDate: 1 })
+          .toArray();
+
+        res.send(data);
+      } catch (error) {
+        console.log( error);
+      }
+    });
+
 
 
     // Send a ping to confirm a successful connection
