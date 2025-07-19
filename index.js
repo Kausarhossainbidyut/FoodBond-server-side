@@ -106,7 +106,14 @@ async function run() {
       }
     });
 
-   
+    //This is for /available-food page
+    app.get("/available-food", async (req, res) => {
+      const data = await foodsColectin
+      .find({ status: "available" })
+      .sort({ expirationDate: 1 }) 
+      .toArray();
+      res.send(data)
+    })
 
     //This for /food-details/:foodId
     app.get("/food-details/:id", async (req, res) => {
