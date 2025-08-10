@@ -68,7 +68,6 @@ const verifyFirebaseToken = async (req, res, next) => {
 
 async function run() {
   try {
-    await client.connect();
     const db = client.db("assignment11");
     const foodsColectin = db.collection("foods");
 
@@ -108,12 +107,26 @@ async function run() {
 
     //This is for /available-food page
     app.get("/available-food", async (req, res) => {
-      const data = await foodsColectin
-        .find({ status: "available" })
-        .sort({ expirationDate: 1 })
-        .toArray();
-      res.send(data)
-    })
+  const { foodName } = req.query;
+
+  let query = { status: "available" };
+
+  if (foodName) {
+    query.foodName = { $regex: foodName, $options: "i" };  // case-insensitive search
+  }
+
+  try {
+    const data = await foodsColectin
+      .find(query)
+      .sort({ expirationDate: 1 })
+      .toArray();
+    res.send(data);
+  } catch (error) {
+    console.error("Error fetching available foods:", error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
 
     //This for /food-details/:foodId
     app.get("/food-details/:id", async (req, res) => {
@@ -208,11 +221,6 @@ async function run() {
     });
 
     
-
-
-
-
-
     // Send a ping to confirm a successful connection
     console.log("✅ Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
