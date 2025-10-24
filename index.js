@@ -1,21 +1,22 @@
 const express = require("express");
 const cors = require("cors");
 
-const { MongoClient, ServerApiVersion, ObjectId, ChangeStream } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const dotenv = require("dotenv");
 dotenv.config();
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./admin-key.json");
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
-
-
-// const serviceAccount = require("./admin-key.json");
+// Initialize Firebase Admin only if service account exists
+let serviceAccount;
+try {
+  serviceAccount = require("./admin-key.json");
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+} catch (error) {
+  console.log("Firebase service account not found, running in limited mode");
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -25,10 +26,6 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-
-
-
-
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.fk8frlr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -39,12 +36,24 @@ const client = new MongoClient(uri, {
   },
 });
 
+let db;
+let foodsCollection;
+let notificationsCollection;
+let requestsCollection;
+
 // middleware/auth.js
 
 const verifyFirebaseToken = async (req, res, next) => {
+  // Ensure database is connected
+  if (!db) {
+    const isConnected = await connectToDatabase();
+    if (!isConnected) {
+      return res.status(500).json({ message: 'Database connection failed' });
+    }
+  }
+  
   const authHeader = req.headers.authorization;
   // console.log('auth:',authHeader);
-
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Unauthorized: No token provided' });
@@ -58,32 +67,73 @@ const verifyFirebaseToken = async (req, res, next) => {
     next();
     console.log('decoderToken:', decodedToken);
 
-
   } catch (error) {
     return res.status(401).json({ message: 'Unauthorized: Invalid token from catch' });
   }
-
 };
 
 
+async function connectToDatabase() {
+  try {
+    // Connect the client to the server (optional starting in v4.7)
+    await client.connect();
+    // Establish and verify connection
+    await client.db("admin").command({ ping: 1 });
+    console.log("✅ Pinged your deployment. You successfully connected to MongoDB!");
+    
+    db = client.db("assignment11");
+    foodsCollection = db.collection("foods");
+    notificationsCollection = db.collection("notifications");
+    requestsCollection = db.collection("requests");
+    
+    return true;
+  } catch (error) {
+    console.error("❌ MongoDB connection error:", error);
+    return false;
+  }
+}
+
 async function run() {
   try {
-    const db = client.db("assignment11");
-    const foodsColectin = db.collection("foods");
-    const notificationsCollection = db.collection("notifications");
-    const requestsCollection = db.collection("requests");
-
+    // Ensure database connection before setting up routes
+    const isConnected = await connectToDatabase();
+    if (!isConnected) {
+      throw new Error("Failed to connect to database");
+    }
+    
+    // Collection references are now global
     //This is for /add-food page
     app.post('/add-food', async (req, res) => {
-      const data = req.body;
-      const result = await foodsColectin.insertOne(data)
-      res.send(result)
+      // Ensure database is connected
+      if (!db) {
+        const isConnected = await connectToDatabase();
+        if (!isConnected) {
+          return res.status(500).send({ error: "Database connection failed" });
+        }
+      }
+      
+      try {
+        const data = req.body;
+        const result = await foodsCollection.insertOne(data);
+        res.send(result);
+      } catch (error) {
+        console.error("Error in /add-food:", error);
+        res.status(500).send({ error: "Failed to add food" });
+      }
     })
 
     //This is for /home/featured-foods page
     app.get("/featured-foods", async (req, res) => {
+      // Ensure database is connected
+      if (!db) {
+        const isConnected = await connectToDatabase();
+        if (!isConnected) {
+          return res.status(500).send({ error: "Database connection failed" });
+        }
+      }
+      
       try {
-        const data = await foodsColectin.aggregate([
+        const data = await foodsCollection.aggregate([
           {
             $match: { status: "available" }
           },
@@ -109,76 +159,91 @@ async function run() {
 
     //This is for /available-food page
     app.get("/available-food", async (req, res) => {
-  const { foodName, location, sortBy, minQuantity, maxQuantity, startDate, endDate } = req.query;
+      // Ensure database is connected
+      if (!db) {
+        const isConnected = await connectToDatabase();
+        if (!isConnected) {
+          return res.status(500).send({ error: "Database connection failed" });
+        }
+      }
+      const { foodName, location, sortBy, minQuantity, maxQuantity, startDate, endDate } = req.query;
 
-  let query = { status: "available" };
+      let query = { status: "available" };
 
-  // Search by food name
-  if (foodName) {
-    query.foodName = { $regex: foodName, $options: "i" };  // case-insensitive search
-  }
+      // Search by food name
+      if (foodName) {
+        query.foodName = { $regex: foodName, $options: "i" };  // case-insensitive search
+      }
 
-  // Filter by location
-  if (location) {
-    query.location = { $regex: location, $options: "i" };
-  }
+      // Filter by location
+      if (location) {
+        query.location = { $regex: location, $options: "i" };
+      }
 
-  // Filter by quantity range
-  if (minQuantity || maxQuantity) {
-    query.quantity = {};
-    if (minQuantity) {
-      query.$expr = { ...query.$expr, $gte: [{ $toInt: "$quantity" }, parseInt(minQuantity)] };
-    }
-    if (maxQuantity) {
-      query.$expr = { ...query.$expr, $lte: [{ $toInt: "$quantity" }, parseInt(maxQuantity)] };
-    }
-  }
+      // Filter by quantity range
+      if (minQuantity || maxQuantity) {
+        query.quantity = {};
+        if (minQuantity) {
+          query.$expr = { ...query.$expr, $gte: [{ $toInt: "$quantity" }, parseInt(minQuantity)] };
+        }
+        if (maxQuantity) {
+          query.$expr = { ...query.$expr, $lte: [{ $toInt: "$quantity" }, parseInt(maxQuantity)] };
+        }
+      }
 
-  // Filter by expiration date range
-  if (startDate || endDate) {
-    query.expirationDate = {};
-    if (startDate) {
-      query.expirationDate.$gte = startDate;
-    }
-    if (endDate) {
-      query.expirationDate.$lte = endDate;
-    }
-  }
+      // Filter by expiration date range
+      if (startDate || endDate) {
+        query.expirationDate = {};
+        if (startDate) {
+          query.expirationDate.$gte = startDate;
+        }
+        if (endDate) {
+          query.expirationDate.$lte = endDate;
+        }
+      }
 
-  // Determine sort order
-  let sortOptions = { expirationDate: 1 }; // default: nearest expiry first
-  
-  if (sortBy === 'quantity-high') {
-    sortOptions = { quantity: -1 };
-  } else if (sortBy === 'quantity-low') {
-    sortOptions = { quantity: 1 };
-  } else if (sortBy === 'expiry-nearest') {
-    sortOptions = { expirationDate: 1 };
-  } else if (sortBy === 'expiry-farthest') {
-    sortOptions = { expirationDate: -1 };
-  } else if (sortBy === 'name-asc') {
-    sortOptions = { foodName: 1 };
-  } else if (sortBy === 'name-desc') {
-    sortOptions = { foodName: -1 };
-  }
+      // Determine sort order
+      let sortOptions = { expirationDate: 1 }; // default: nearest expiry first
+      
+      if (sortBy === 'quantity-high') {
+        sortOptions = { quantity: -1 };
+      } else if (sortBy === 'quantity-low') {
+        sortOptions = { quantity: 1 };
+      } else if (sortBy === 'expiry-nearest') {
+        sortOptions = { expirationDate: 1 };
+      } else if (sortBy === 'expiry-farthest') {
+        sortOptions = { expirationDate: -1 };
+      } else if (sortBy === 'name-asc') {
+        sortOptions = { foodName: 1 };
+      } else if (sortBy === 'name-desc') {
+        sortOptions = { foodName: -1 };
+      }
 
-  try {
-    const data = await foodsColectin
-      .find(query)
-      .sort(sortOptions)
-      .toArray();
-    res.send(data);
-  } catch (error) {
-    console.error("Error fetching available foods:", error);
-    res.status(500).send({ message: "Server error" });
-  }
+      try {
+        const data = await foodsCollection
+          .find(query)
+          .sort(sortOptions)
+          .toArray();
+        res.send(data);
+      } catch (error) {
+        console.error("Error fetching available foods:", error);
+        res.status(500).send({ message: "Server error" });
+      }
 });
 
 
     //This for /food-details/:foodId
     app.get("/food-details/:id", async (req, res) => {
+      // Ensure database is connected
+      if (!db) {
+        const isConnected = await connectToDatabase();
+        if (!isConnected) {
+          return res.status(500).send({ error: "Database connection failed" });
+        }
+      }
+      
       const query = { _id: new ObjectId(req.params.id) }
-      const data = await foodsColectin.findOne(query)
+      const data = await foodsCollection.findOne(query)
       res.send(data)
     })
 
@@ -189,7 +254,7 @@ async function run() {
 
       try {
         // Get the food item
-        const food = await foodsColectin.findOne(query);
+        const food = await foodsCollection.findOne(query);
         
         if (!food) {
           return res.status(404).send({ error: "Food not found" });
@@ -219,7 +284,7 @@ async function run() {
           },
         };
 
-        const result = await foodsColectin.updateOne(query, updateDoc);
+        const result = await foodsCollection.updateOne(query, updateDoc);
 
         // Create a request record
         const requestRecord = {
@@ -268,7 +333,7 @@ async function run() {
     // this is /manage-my-food
     app.get("/manage-my-food", verifyFirebaseToken, async (req, res) => {
       const query = { donorEmail: req.firebaseUser.email }
-      const data = await foodsColectin
+      const data = await foodsCollection
         .find(query)
         .toArray();
       res.send(data)
@@ -281,7 +346,7 @@ async function run() {
         const { foodName, foodImage, quantity, expirationDate, location, notes } = req.body;
         
         // Verify the user is the owner
-        const food = await foodsColectin.findOne({ _id: foodId });
+        const food = await foodsCollection.findOne({ _id: foodId });
         if (!food) {
           return res.status(404).send({ error: "Food not found" });
         }
@@ -302,7 +367,7 @@ async function run() {
           }
         };
 
-        const result = await foodsColectin.updateOne({ _id: foodId }, updateDoc);
+        const result = await foodsCollection.updateOne({ _id: foodId }, updateDoc);
         res.send(result);
       } catch (error) {
         console.error("Error updating food:", error);
@@ -348,14 +413,14 @@ async function run() {
 
         // Return the quantity back to the food item
         const foodQuery = { _id: new ObjectId(request.foodId) };
-        const food = await foodsColectin.findOne(foodQuery);
+        const food = await foodsCollection.findOne(foodQuery);
         
         if (food) {
           const currentQty = parseInt(food.quantity);
           const returnedQty = parseInt(request.requestedQuantity);
           const newQuantity = currentQty + returnedQty;
 
-          await foodsColectin.updateOne(foodQuery, {
+          await foodsCollection.updateOne(foodQuery, {
             $set: {
               quantity: newQuantity.toString(),
               status: "available" // Make it available again
@@ -504,7 +569,7 @@ async function run() {
         const userEmail = req.firebaseUser.email;
         
         // Total foods donated
-        const totalDonated = await foodsColectin.countDocuments({
+        const totalDonated = await foodsCollection.countDocuments({
           donorEmail: userEmail
         });
         
@@ -514,13 +579,13 @@ async function run() {
         });
         
         // Foods currently available from user
-        const availableFoods = await foodsColectin.countDocuments({
+        const availableFoods = await foodsCollection.countDocuments({
           donorEmail: userEmail,
           status: "available"
         });
         
         // Total quantity donated (sum of all food quantities)
-        const totalQuantityDonated = await foodsColectin.aggregate([
+        const totalQuantityDonated = await foodsCollection.aggregate([
           { $match: { donorEmail: userEmail } },
           { $group: { _id: null, total: { $sum: { $toInt: "$quantity" } } } }
         ]).toArray();
@@ -547,20 +612,20 @@ async function run() {
     app.get("/analytics/global", async (req, res) => {
       try {
         // Total foods in system
-        const totalFoods = await foodsColectin.countDocuments({});
+        const totalFoods = await foodsCollection.countDocuments({});
         
         // Available foods
-        const availableFoods = await foodsColectin.countDocuments({
+        const availableFoods = await foodsCollection.countDocuments({
           status: "available"
         });
         
         // Requested foods
-        const requestedFoods = await foodsColectin.countDocuments({
+        const requestedFoods = await foodsCollection.countDocuments({
           status: "requested"
         });
         
         // Top donors
-        const topDonors = await foodsColectin.aggregate([
+        const topDonors = await foodsCollection.aggregate([
           {
             $group: {
               _id: "$donorEmail",
@@ -573,7 +638,7 @@ async function run() {
         ]).toArray();
         
         // Food distribution by location
-        const foodsByLocation = await foodsColectin.aggregate([
+        const foodsByLocation = await foodsCollection.aggregate([
           {
             $group: {
               _id: "$location",
@@ -599,6 +664,14 @@ async function run() {
 
     // delete food
     app.delete('/manage-my-food/:id', async (req, res) => {
+      // Ensure database is connected
+      if (!db) {
+        const isConnected = await connectToDatabase();
+        if (!isConnected) {
+          return res.status(500).json({ error: "Database connection failed" });
+        }
+      }
+      
       const id = req.params.id;
 
       
@@ -609,7 +682,7 @@ async function run() {
       const query = { _id: new ObjectId(id) };
 
       try {
-        const result = await foodsColectin.deleteOne(query);
+        const result = await foodsCollection.deleteOne(query);
         if (result.deletedCount === 0) {
           return res.status(404).json({ error: "Food item not found" });
         }
@@ -627,25 +700,23 @@ async function run() {
   }
 }
 
-run().catch(console.dir);
-
-
-
 // Root route
-
-
-app.get("/", verifyFirebaseToken, async (req, res) => {
-  // const token =req.headers?.authorization.split(' ')[1]
-  // console.log(verifyFirebaseToken);
-
+app.get("/", (req, res) => {
   res.send("Server is running!");
 });
 
+// Initialize the database connection and set up routes
+run().catch(console.dir);
 
+// Export the app for Vercel
+module.exports = app;
 
-app.listen(PORT, () => {
-  console.log(`Server is listening on port ${PORT}`);
-});
+// Only start the server if running locally (not on Vercel)
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server is listening on port ${PORT}`);
+  });
+}
 
 
 /*
